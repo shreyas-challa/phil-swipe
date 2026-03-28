@@ -310,8 +310,8 @@ async function callMiniMaxAPI(userMessage, conversationHistory, idea) {
   req.body = JSON.stringify({
     model: MODEL_NAME,
     messages: messages,
-    temperature: 0.8,
-    max_tokens: 512,
+    temperature: 0.9,
+    max_tokens: 1024,
   });
   req.timeoutInterval = 30;
 
@@ -708,12 +708,35 @@ function buildChatHTML(idea, conversation) {
     scrollToBottom();
   }
 
+  // Queue for actions from user (buttons/send)
+  var actionQueue = [];
+  var actionResolver = null;
+
+  function emitAction(data) {
+    if (actionResolver) {
+      var r = actionResolver;
+      actionResolver = null;
+      r(data);
+    } else {
+      actionQueue.push(data);
+    }
+  }
+
+  function waitForUserAction() {
+    if (actionQueue.length > 0) {
+      return Promise.resolve(actionQueue.shift());
+    }
+    return new Promise(function(resolve) {
+      actionResolver = resolve;
+    });
+  }
+
   function onStance(stance) {
     stanceRow.style.display = 'none';
     var labels = { Agree: 'I agree with this idea.', Disagree: 'I disagree with this idea.', Unsure: "I'm unsure about this idea." };
     addUserMessage(labels[stance]);
     showTyping();
-    completion({ action: 'stance', stance: stance });
+    emitAction({ action: 'stance', stance: stance });
   }
 
   function onSend() {
@@ -723,7 +746,7 @@ function buildChatHTML(idea, conversation) {
     chatInput.style.height = 'auto';
     addUserMessage(msg);
     showTyping();
-    completion({ action: 'send_message', message: msg });
+    emitAction({ action: 'send_message', message: msg });
   }
 
   chatInput.addEventListener('keydown', function(e) {
@@ -732,12 +755,6 @@ function buildChatHTML(idea, conversation) {
       onSend();
     }
   });
-
-  function waitForUserAction() {
-    return new Promise(function(resolve) {
-      window._resolveAction = resolve;
-    });
-  }
 
   scrollToBottom();
 </script>
@@ -755,28 +772,24 @@ async function runInteractiveMode() {
 
   let shouldContinue = true;
 
-  // Present WebView and handle messages in parallel
-  const presentPromise = wv.present(true);
+  // Present WebView without awaiting — it resolves when dismissed
+  wv.present(true).then(() => { shouldContinue = false; });
 
   while (shouldContinue) {
     let result;
     try {
+      // evaluateJavaScript with true = Scriptable injects completion()
+      // waitForUserAction() returns a Promise; .then calls completion() to send data back
       result = await wv.evaluateJavaScript(
-        `new Promise(function(resolve) {
-          window.completion = function(val) { resolve(val); };
-        })`,
+        `waitForUserAction().then(function(val) { completion(val); })`,
         true,
       );
     } catch (e) {
       // WebView was dismissed
-      shouldContinue = false;
       break;
     }
 
-    if (!result || !result.action) {
-      shouldContinue = false;
-      break;
-    }
+    if (!result || !result.action) break;
 
     if (result.action === "stance") {
       const userMsg = buildStancePrompt(result.stance, idea);
@@ -813,7 +826,7 @@ async function runInteractiveMode() {
         `addAssistantMessage(${JSON.stringify(reply)})`,
       );
     } else {
-      shouldContinue = false;
+      break;
     }
   }
 }
