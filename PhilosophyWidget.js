@@ -318,9 +318,11 @@ async function callMiniMaxAPI(userMessage, conversationHistory, idea) {
   try {
     const resp = await req.loadJSON();
     if (resp.choices && resp.choices.length > 0) {
-      return resp.choices[0].message.content;
+      let content = resp.choices[0].message.content;
+      // Strip <think>...</think> reasoning tags from MiniMax response
+      content = content.replace(/<think>[\s\S]*?<\/think>\s*/g, "");
+      return content.trim() || "[DEBUG] Response was empty after stripping think tags";
     }
-    // Show the actual error in the chat so we can debug
     return "[DEBUG] Unexpected API response: " + JSON.stringify(resp).substring(0, 300);
   } catch (e) {
     return "[DEBUG] API call failed: " + String(e);
@@ -766,69 +768,62 @@ function buildChatHTML(idea, conversation) {
 async function runInteractiveMode() {
   const idea = getTodayIdea();
   const conversation = loadConversation();
-  const html = buildChatHTML(idea, conversation);
 
-  const wv = new WebView();
-  await wv.loadHTML(html);
+  // Show the idea and question first
+  let infoAlert = new Alert();
+  infoAlert.title = idea.title;
+  infoAlert.message = idea.fullExplanation + "\n\n💭 " + idea.question;
+  infoAlert.addAction("I Agree");
+  infoAlert.addAction("I Disagree");
+  infoAlert.addAction("I'm Unsure");
+  infoAlert.addCancelAction("Close");
+  const stanceIdx = await infoAlert.presentAlert();
 
+  if (stanceIdx === -1) return; // cancelled
+
+  const stances = ["Agree", "Disagree", "Unsure"];
+  const chosenStance = stances[stanceIdx];
+  const userMsg = buildStancePrompt(chosenStance, idea);
+
+  // Call API
+  let reply = await callMiniMaxAPI(userMsg, conversation, idea);
+  const stanceLabels = {
+    Agree: "I agree with this idea.",
+    Disagree: "I disagree with this idea.",
+    Unsure: "I'm unsure about this idea.",
+  };
+  conversation.stanceChosen = chosenStance;
+  conversation.messages.push(
+    { role: "user", content: stanceLabels[chosenStance] },
+    { role: "assistant", content: reply },
+  );
+  saveConversation(conversation);
+
+  // Show AI response and allow continued conversation
   let shouldContinue = true;
-
-  // Present WebView without awaiting — it resolves when dismissed
-  wv.present(true).then(() => { shouldContinue = false; });
-
   while (shouldContinue) {
-    let result;
-    try {
-      // evaluateJavaScript with true = Scriptable injects completion()
-      // waitForUserAction() returns a Promise; .then calls completion() to send data back
-      result = await wv.evaluateJavaScript(
-        `waitForUserAction().then(function(val) { completion(val); })`,
-        true,
-      );
-    } catch (e) {
-      // WebView was dismissed
+    let replyAlert = new Alert();
+    replyAlert.title = "Philosopher";
+    replyAlert.message = reply;
+    replyAlert.addTextField("Share your thoughts...", "");
+    replyAlert.addAction("Send");
+    replyAlert.addCancelAction("Done");
+    const replyIdx = await replyAlert.presentAlert();
+
+    if (replyIdx === -1) {
+      shouldContinue = false;
       break;
     }
 
-    if (!result || !result.action) break;
+    const userText = replyAlert.textFieldValue(0).trim();
+    if (!userText) continue;
 
-    if (result.action === "stance") {
-      const userMsg = buildStancePrompt(result.stance, idea);
-      conversation.stanceChosen = result.stance;
-      const reply = await callMiniMaxAPI(userMsg, conversation, idea);
-      conversation.messages.push(
-        {
-          role: "user",
-          content:
-            result.stance === "Agree"
-              ? "I agree with this idea."
-              : result.stance === "Disagree"
-                ? "I disagree with this idea."
-                : "I'm unsure about this idea.",
-        },
-        { role: "assistant", content: reply },
-      );
-      saveConversation(conversation);
-      await wv.evaluateJavaScript(
-        `addAssistantMessage(${JSON.stringify(reply)})`,
-      );
-    } else if (result.action === "send_message") {
-      const reply = await callMiniMaxAPI(
-        result.message,
-        conversation,
-        idea,
-      );
-      conversation.messages.push(
-        { role: "user", content: result.message },
-        { role: "assistant", content: reply },
-      );
-      saveConversation(conversation);
-      await wv.evaluateJavaScript(
-        `addAssistantMessage(${JSON.stringify(reply)})`,
-      );
-    } else {
-      break;
-    }
+    reply = await callMiniMaxAPI(userText, conversation, idea);
+    conversation.messages.push(
+      { role: "user", content: userText },
+      { role: "assistant", content: reply },
+    );
+    saveConversation(conversation);
   }
 }
 
