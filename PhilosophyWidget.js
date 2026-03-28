@@ -353,7 +353,7 @@ async function createWidget() {
   gradient.startPoint = new Point(0, 0);
   gradient.endPoint = new Point(1, 1);
   widget.backgroundGradient = gradient;
-  widget.setPadding(14, 16, 14, 16);
+  widget.setPadding(16, 18, 16, 18);
 
   // Tap action
   widget.url = "scriptable:///run/PhilosophyWidget";
@@ -363,7 +363,7 @@ async function createWidget() {
   headerStack.layoutHorizontally();
   headerStack.centerAlignContent();
 
-  const dot = headerStack.addText("◆");
+  const dot = headerStack.addText("\u25C6");
   dot.font = Font.systemFont(8);
   dot.textColor = new Color(COLORS.gold);
 
@@ -383,19 +383,35 @@ async function createWidget() {
 
   // Title
   const title = widget.addText(idea.title);
-  title.font = Font.boldSystemFont(18);
+  title.font = Font.boldSystemFont(22);
   title.textColor = Color.white();
   title.minimumScaleFactor = 0.8;
   title.lineLimit = 1;
 
-  widget.addSpacer(6);
+  widget.addSpacer(4);
 
-  // Widget description
+  // Thinker
+  const thinker = widget.addText(idea.thinker);
+  thinker.font = Font.italicSystemFont(12);
+  thinker.textColor = new Color(COLORS.mutedGray);
+
+  widget.addSpacer(10);
+
+  // Widget description / teaser question
   const desc = widget.addText(idea.widgetDesc);
-  desc.font = Font.lightSystemFont(14);
+  desc.font = Font.mediumRoundedSystemFont(15);
   desc.textColor = new Color(COLORS.lightGray);
-  desc.lineLimit = 2;
-  desc.minimumScaleFactor = 0.9;
+  desc.lineLimit = 3;
+  desc.minimumScaleFactor = 0.85;
+
+  widget.addSpacer(8);
+
+  // Full explanation preview (large widget has room)
+  const preview = widget.addText(idea.fullExplanation);
+  preview.font = Font.systemFont(12);
+  preview.textColor = new Color(COLORS.mutedGray);
+  preview.lineLimit = 4;
+  preview.minimumScaleFactor = 0.8;
 
   widget.addSpacer();
 
@@ -403,9 +419,9 @@ async function createWidget() {
   const footerStack = widget.addStack();
   footerStack.layoutHorizontally();
   footerStack.addSpacer();
-  const footer = footerStack.addText("Tap to ponder →");
-  footer.font = Font.italicSystemFont(11);
-  footer.textColor = new Color(COLORS.mutedGray);
+  const footer = footerStack.addText("Tap to discuss \u2192");
+  footer.font = Font.italicSystemFont(12);
+  footer.textColor = new Color(COLORS.gold);
 
   // Refresh at next midnight
   const tomorrow = new Date();
@@ -612,21 +628,20 @@ function buildChatHTML(idea, conversation) {
     align-items: flex-end;
     padding-bottom: max(12px, env(safe-area-inset-bottom));
   }
-  .input-bar textarea {
+  .input-bar input[type="text"] {
     flex: 1;
     background: ${COLORS.inputBg};
     border: 1px solid rgba(255,255,255,0.1);
     border-radius: 20px;
     color: ${COLORS.white};
-    font-size: 15px;
+    font-size: 16px;
     padding: 10px 16px;
-    resize: none;
     outline: none;
     font-family: -apple-system, system-ui, sans-serif;
-    max-height: 100px;
-    line-height: 1.4;
+    -webkit-appearance: none;
+    appearance: none;
   }
-  .input-bar textarea::placeholder { color: ${COLORS.mutedGray}; }
+  .input-bar input[type="text"]::placeholder { color: ${COLORS.mutedGray}; }
   .send-btn {
     width: 40px;
     height: 40px;
@@ -676,7 +691,7 @@ function buildChatHTML(idea, conversation) {
 </div>
 
 <div class="input-bar">
-  <textarea id="chatInput" rows="1" placeholder="Share your thoughts..." oninput="autoResize(this)"></textarea>
+  <input type="text" id="chatInput" placeholder="Share your thoughts..." autocomplete="off" />
   <button class="send-btn" onclick="onSend()">&#8593;</button>
 </div>
 
@@ -698,11 +713,6 @@ function buildChatHTML(idea, conversation) {
 
   function scrollToBottom() {
     setTimeout(function() { scrollArea.scrollTop = scrollArea.scrollHeight; }, 50);
-  }
-
-  function autoResize(el) {
-    el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 100) + 'px';
   }
 
   function escapeHTML(text) {
@@ -764,10 +774,13 @@ function buildChatHTML(idea, conversation) {
       if (data.choices && data.choices.length > 0) {
         var content = data.choices[0].message.content;
         // Strip <think> reasoning tags
-        content = content.replace(/<think>[\\s\\S]*?<\\/think>\\s*/g, "");
+        var thinkEnd = content.lastIndexOf("</think>");
+        if (thinkEnd !== -1) {
+          content = content.substring(thinkEnd + 8);
+        }
         return content.trim() || "Let me think about that differently...";
       }
-      return "Unexpected response: " + JSON.stringify(data).substring(0, 200);
+      return "API error: " + JSON.stringify(data).substring(0, 200);
     } catch (e) {
       return "Connection error: " + e.message;
     }
@@ -776,15 +789,21 @@ function buildChatHTML(idea, conversation) {
   async function handleUserMessage(userText, displayText) {
     if (isSending) return;
     isSending = true;
+    chatInput.disabled = true;
     showTyping();
 
-    var reply = await callAPI(userText);
+    try {
+      var reply = await callAPI(userText);
+      conversationHistory.push({ role: "user", content: displayText || userText });
+      conversationHistory.push({ role: "assistant", content: reply });
+      addAssistantMessage(reply);
+    } catch (e) {
+      addAssistantMessage("Something went wrong: " + e.message);
+    }
 
-    conversationHistory.push({ role: "user", content: displayText || userText });
-    conversationHistory.push({ role: "assistant", content: reply });
-
-    addAssistantMessage(reply);
     isSending = false;
+    chatInput.disabled = false;
+    chatInput.focus();
   }
 
   function onStance(stance) {
@@ -798,13 +817,12 @@ function buildChatHTML(idea, conversation) {
     var msg = chatInput.value.trim();
     if (!msg || isSending) return;
     chatInput.value = '';
-    chatInput.style.height = 'auto';
     addUserMessage(msg);
     handleUserMessage(msg);
   }
 
   chatInput.addEventListener('keydown', function(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter') {
       e.preventDefault();
       onSend();
     }
