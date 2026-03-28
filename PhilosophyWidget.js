@@ -383,35 +383,35 @@ async function createWidget() {
 
   // Title
   const title = widget.addText(idea.title);
-  title.font = Font.boldSystemFont(22);
+  title.font = Font.boldSystemFont(26);
   title.textColor = Color.white();
   title.minimumScaleFactor = 0.8;
-  title.lineLimit = 1;
+  title.lineLimit = 2;
 
   widget.addSpacer(4);
 
   // Thinker
   const thinker = widget.addText(idea.thinker);
-  thinker.font = Font.italicSystemFont(12);
+  thinker.font = Font.italicSystemFont(13);
   thinker.textColor = new Color(COLORS.mutedGray);
 
-  widget.addSpacer(10);
+  widget.addSpacer(12);
 
-  // Widget description / teaser question
-  const desc = widget.addText(idea.widgetDesc);
-  desc.font = Font.mediumRoundedSystemFont(15);
-  desc.textColor = new Color(COLORS.lightGray);
-  desc.lineLimit = 3;
-  desc.minimumScaleFactor = 0.85;
+  // Full explanation
+  const explanation = widget.addText(idea.fullExplanation);
+  explanation.font = Font.systemFont(14);
+  explanation.textColor = new Color(COLORS.lightGray);
+  explanation.lineLimit = 8;
+  explanation.minimumScaleFactor = 0.8;
 
-  widget.addSpacer(8);
+  widget.addSpacer(12);
 
-  // Full explanation preview (large widget has room)
-  const preview = widget.addText(idea.fullExplanation);
-  preview.font = Font.systemFont(12);
-  preview.textColor = new Color(COLORS.mutedGray);
-  preview.lineLimit = 4;
-  preview.minimumScaleFactor = 0.8;
+  // Question in gold — the hook
+  const question = widget.addText("\u201C " + idea.widgetDesc + " \u201D");
+  question.font = Font.mediumRoundedSystemFont(16);
+  question.textColor = new Color(COLORS.gold);
+  question.lineLimit = 3;
+  question.minimumScaleFactor = 0.85;
 
   widget.addSpacer();
 
@@ -420,7 +420,7 @@ async function createWidget() {
   footerStack.layoutHorizontally();
   footerStack.addSpacer();
   const footer = footerStack.addText("Tap to discuss \u2192");
-  footer.font = Font.italicSystemFont(12);
+  footer.font = Font.semiboldSystemFont(13);
   footer.textColor = new Color(COLORS.gold);
 
   // Refresh at next midnight
