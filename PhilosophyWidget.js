@@ -437,6 +437,15 @@ function buildChatHTML(idea, conversation) {
 
   const stanceHidden = conversation.stanceChosen ? "display:none;" : "";
 
+  // Inject everything the WebView needs to call the API on its own
+  const systemPrompt = buildSystemPrompt(idea).replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
+  const convJSON = JSON.stringify(conversation.messages);
+  const stancePrompts = JSON.stringify({
+    Agree: buildStancePrompt("Agree", idea),
+    Disagree: buildStancePrompt("Disagree", idea),
+    Unsure: buildStancePrompt("Unsure", idea),
+  });
+
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -640,9 +649,9 @@ function buildChatHTML(idea, conversation) {
 <body>
 
 <div class="header">
-  <div class="header-label">◆ DAILY PHILOSOPHY</div>
+  <div class="header-label">\u25C6 DAILY PHILOSOPHY</div>
   <div class="header-title">${idea.title}</div>
-  <div class="header-thinker">${idea.thinker} · ${idea.category}</div>
+  <div class="header-thinker">${idea.thinker} \u00B7 ${idea.category}</div>
 </div>
 
 <div class="scroll-area" id="scrollArea">
@@ -668,15 +677,24 @@ function buildChatHTML(idea, conversation) {
 
 <div class="input-bar">
   <textarea id="chatInput" rows="1" placeholder="Share your thoughts..." oninput="autoResize(this)"></textarea>
-  <button class="send-btn" onclick="onSend()">↑</button>
+  <button class="send-btn" onclick="onSend()">&#8593;</button>
 </div>
 
 <script>
+  // --- API CONFIG (injected from Scriptable) ---
+  var API_KEY = "${API_KEY}";
+  var API_ENDPOINT = "${API_ENDPOINT}";
+  var MODEL_NAME = "${MODEL_NAME}";
+  var SYSTEM_PROMPT = \`${systemPrompt}\`;
+  var conversationHistory = ${convJSON};
+  var stancePrompts = ${stancePrompts};
+
   var scrollArea = document.getElementById('scrollArea');
   var chatContainer = document.getElementById('chatContainer');
   var typingEl = document.getElementById('typing');
   var stanceRow = document.getElementById('stanceRow');
   var chatInput = document.getElementById('chatInput');
+  var isSending = false;
 
   function scrollToBottom() {
     setTimeout(function() { scrollArea.scrollTop = scrollArea.scrollHeight; }, 50);
@@ -687,21 +705,23 @@ function buildChatHTML(idea, conversation) {
     el.style.height = Math.min(el.scrollHeight, 100) + 'px';
   }
 
+  function escapeHTML(text) {
+    return text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\\n/g,'<br>');
+  }
+
   function addUserMessage(text) {
-    var escaped = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\\n/g,'<br>');
     var div = document.createElement('div');
     div.className = 'msg user-msg';
-    div.innerHTML = '<span class="msg-label">You</span>' + escaped;
+    div.innerHTML = '<span class="msg-label">You</span>' + escapeHTML(text);
     chatContainer.appendChild(div);
     scrollToBottom();
   }
 
   function addAssistantMessage(text) {
     typingEl.classList.remove('visible');
-    var escaped = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\\n/g,'<br>');
     var div = document.createElement('div');
     div.className = 'msg ai-msg';
-    div.innerHTML = '<span class="msg-label">Philosopher</span>' + escaped;
+    div.innerHTML = '<span class="msg-label">Philosopher</span>' + escapeHTML(text);
     chatContainer.appendChild(div);
     scrollToBottom();
   }
@@ -711,45 +731,76 @@ function buildChatHTML(idea, conversation) {
     scrollToBottom();
   }
 
-  // Queue for actions from user (buttons/send)
-  var actionQueue = [];
-  var actionResolver = null;
+  function trimHistory(msgs, maxPairs) {
+    maxPairs = maxPairs || 10;
+    if (msgs.length > maxPairs * 2) {
+      return msgs.slice(msgs.length - maxPairs * 2);
+    }
+    return msgs;
+  }
 
-  function emitAction(data) {
-    if (actionResolver) {
-      var r = actionResolver;
-      actionResolver = null;
-      r(data);
-    } else {
-      actionQueue.push(data);
+  async function callAPI(userMessage) {
+    var messages = [
+      { role: "system", content: SYSTEM_PROMPT }
+    ].concat(trimHistory(conversationHistory)).concat([
+      { role: "user", content: userMessage }
+    ]);
+
+    try {
+      var resp = await fetch(API_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer " + API_KEY
+        },
+        body: JSON.stringify({
+          model: MODEL_NAME,
+          messages: messages,
+          temperature: 0.9,
+          max_tokens: 1024
+        })
+      });
+      var data = await resp.json();
+      if (data.choices && data.choices.length > 0) {
+        var content = data.choices[0].message.content;
+        // Strip <think> reasoning tags
+        content = content.replace(/<think>[\\s\\S]*?<\\/think>\\s*/g, "");
+        return content.trim() || "Let me think about that differently...";
+      }
+      return "Unexpected response: " + JSON.stringify(data).substring(0, 200);
+    } catch (e) {
+      return "Connection error: " + e.message;
     }
   }
 
-  function waitForUserAction() {
-    if (actionQueue.length > 0) {
-      return Promise.resolve(actionQueue.shift());
-    }
-    return new Promise(function(resolve) {
-      actionResolver = resolve;
-    });
+  async function handleUserMessage(userText, displayText) {
+    if (isSending) return;
+    isSending = true;
+    showTyping();
+
+    var reply = await callAPI(userText);
+
+    conversationHistory.push({ role: "user", content: displayText || userText });
+    conversationHistory.push({ role: "assistant", content: reply });
+
+    addAssistantMessage(reply);
+    isSending = false;
   }
 
   function onStance(stance) {
     stanceRow.style.display = 'none';
     var labels = { Agree: 'I agree with this idea.', Disagree: 'I disagree with this idea.', Unsure: "I'm unsure about this idea." };
     addUserMessage(labels[stance]);
-    showTyping();
-    emitAction({ action: 'stance', stance: stance });
+    handleUserMessage(stancePrompts[stance], labels[stance]);
   }
 
   function onSend() {
     var msg = chatInput.value.trim();
-    if (!msg) return;
+    if (!msg || isSending) return;
     chatInput.value = '';
     chatInput.style.height = 'auto';
     addUserMessage(msg);
-    showTyping();
-    emitAction({ action: 'send_message', message: msg });
+    handleUserMessage(msg);
   }
 
   chatInput.addEventListener('keydown', function(e) {
@@ -768,62 +819,21 @@ function buildChatHTML(idea, conversation) {
 async function runInteractiveMode() {
   const idea = getTodayIdea();
   const conversation = loadConversation();
+  const html = buildChatHTML(idea, conversation);
 
-  // Show the idea and question first
-  let infoAlert = new Alert();
-  infoAlert.title = idea.title;
-  infoAlert.message = idea.fullExplanation + "\n\n💭 " + idea.question;
-  infoAlert.addAction("I Agree");
-  infoAlert.addAction("I Disagree");
-  infoAlert.addAction("I'm Unsure");
-  infoAlert.addCancelAction("Close");
-  const stanceIdx = await infoAlert.presentAlert();
+  const wv = new WebView();
+  await wv.loadHTML(html);
+  await wv.present(true);
 
-  if (stanceIdx === -1) return; // cancelled
-
-  const stances = ["Agree", "Disagree", "Unsure"];
-  const chosenStance = stances[stanceIdx];
-  const userMsg = buildStancePrompt(chosenStance, idea);
-
-  // Call API
-  let reply = await callMiniMaxAPI(userMsg, conversation, idea);
-  const stanceLabels = {
-    Agree: "I agree with this idea.",
-    Disagree: "I disagree with this idea.",
-    Unsure: "I'm unsure about this idea.",
-  };
-  conversation.stanceChosen = chosenStance;
-  conversation.messages.push(
-    { role: "user", content: stanceLabels[chosenStance] },
-    { role: "assistant", content: reply },
-  );
-  saveConversation(conversation);
-
-  // Show AI response and allow continued conversation
-  let shouldContinue = true;
-  while (shouldContinue) {
-    let replyAlert = new Alert();
-    replyAlert.title = "Philosopher";
-    replyAlert.message = reply;
-    replyAlert.addTextField("Share your thoughts...", "");
-    replyAlert.addAction("Send");
-    replyAlert.addCancelAction("Done");
-    const replyIdx = await replyAlert.presentAlert();
-
-    if (replyIdx === -1) {
-      shouldContinue = false;
-      break;
+  // After WebView is dismissed, save conversation from WebView state
+  try {
+    const historyJSON = await wv.evaluateJavaScript("JSON.stringify(conversationHistory)");
+    if (historyJSON) {
+      conversation.messages = JSON.parse(historyJSON);
+      saveConversation(conversation);
     }
-
-    const userText = replyAlert.textFieldValue(0).trim();
-    if (!userText) continue;
-
-    reply = await callMiniMaxAPI(userText, conversation, idea);
-    conversation.messages.push(
-      { role: "user", content: userText },
-      { role: "assistant", content: reply },
-    );
-    saveConversation(conversation);
+  } catch (e) {
+    // WebView already closed, that's fine
   }
 }
 
