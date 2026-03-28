@@ -3,8 +3,7 @@
 // ═══════════════════════════════════════════
 
 const API_KEY = "YOUR_MINIMAX_API_KEY_HERE";
-const GROUP_ID = "YOUR_GROUP_ID_HERE"; // Find at: platform.minimax.io/user-center/basic-information
-const API_ENDPOINT = `https://api.minimax.io/v1/text/chatcompletion_v2?GroupId=${GROUP_ID}`;
+const API_ENDPOINT = "https://api.minimax.io/v1/chat/completions";
 const MODEL_NAME = "MiniMax-M2.7";
 
 const COLORS = {
@@ -318,16 +317,13 @@ async function callMiniMaxAPI(userMessage, conversationHistory, idea) {
 
   try {
     const resp = await req.loadJSON();
-    // Native MiniMax endpoint returns { choices: [{ message: { content } }] }
     if (resp.choices && resp.choices.length > 0) {
       return resp.choices[0].message.content;
     }
-    // Log unexpected response for debugging
-    console.log("MiniMax API unexpected response: " + JSON.stringify(resp));
-    return "Unexpected response from the philosopher. Try again.";
+    // Show the actual error in the chat so we can debug
+    return "[DEBUG] Unexpected API response: " + JSON.stringify(resp).substring(0, 300);
   } catch (e) {
-    console.log("MiniMax API error: " + e.message);
-    return "Unable to connect right now. Ponder this question on your own for a while — sometimes the best philosopher is your own quiet mind.";
+    return "[DEBUG] API call failed: " + String(e);
   }
 }
 
