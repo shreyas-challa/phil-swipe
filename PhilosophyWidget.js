@@ -501,6 +501,22 @@ function buildChatHTML(idea, conversation) {
     color: ${COLORS.mutedGray};
     margin-top: 2px;
   }
+  .header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .reset-btn {
+    background: none;
+    border: 1px solid ${COLORS.mutedGray};
+    color: ${COLORS.mutedGray};
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 12px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .reset-btn:active { border-color: ${COLORS.gold}; color: ${COLORS.gold}; }
 
   .scroll-area {
     flex: 1;
@@ -665,7 +681,10 @@ function buildChatHTML(idea, conversation) {
 
 <div class="header">
   <div class="header-label">\u25C6 DAILY PHILOSOPHY</div>
-  <div class="header-title">${idea.title}</div>
+  <div class="header-row">
+    <div class="header-title">${idea.title}</div>
+    <button class="reset-btn" onclick="onReset()">New Start</button>
+  </div>
   <div class="header-thinker">${idea.thinker} \u00B7 ${idea.category}</div>
 </div>
 
@@ -828,6 +847,18 @@ function buildChatHTML(idea, conversation) {
     }
   });
 
+  function onReset() {
+    conversationHistory = [];
+    chatContainer.innerHTML = '';
+    stanceRow.style.display = 'flex';
+    isSending = false;
+    chatInput.disabled = false;
+    chatInput.value = '';
+  }
+
+  // Make sure input is always usable on load
+  isSending = false;
+  chatInput.disabled = false;
   scrollToBottom();
 </script>
 </body>
